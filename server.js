@@ -104,7 +104,7 @@ async function listProjects() {
         });
         const projects = await response.json();
 
-        const exclusive = "TEST TH: NPE \\ F-Fügedetail"
+        const exclusive = ""
 
         for (const project of projects.data) {
             if(!exclusive || project.attributes.name===exclusive) {
