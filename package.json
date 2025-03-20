@@ -1,0 +1,13 @@
+{
+  "name": "ACC Backup",
+  "version": "1.0.0",
+  "main": "server.js",
+  "scripts": {
+    "start": "npx nodemon server.js",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix"
+  },
+  "author": "David Fickert",
+  "license": "MIT",
+  "description": ""
+}
