@@ -22,7 +22,6 @@ const loadFile = (file) => {
 };
 
 const config = loadFile('config.json');
-
 const logFile = path.join(process.cwd(), 'error.log');
 
 function logErrorToFile(error) {
@@ -30,22 +29,35 @@ function logErrorToFile(error) {
     fs.appendFileSync(logFile, errorMessage);
 }
 
+const start = Date.now();
+const timestamp = new Date().toISOString().replace(/[:T]/g, '-').split('.')[0];
+
 function rotateBackups() {
-    for (let i = 4; i > 1; i--) {
-        const oldPath = path.join(config.BACKUP_DIR, `backup_${i - 1}`);
-        const newPath = path.join(config.BACKUP_DIR, `backup_${i}`);
-        if (fs.existsSync(oldPath)) {
-            fs.renameSync(oldPath, newPath);
+    try {
+        const MAX_BACKUPS = config.MAX_BACKUPS;
+        const BACKUP_DIR = config.BACKUP_DIR;
+
+
+        const newBackup = path.join(BACKUP_DIR, `backup_${timestamp}`);
+        fs.mkdirSync(newBackup, { recursive: true });
+
+        let backups = fs.readdirSync(BACKUP_DIR)
+            .filter(name => name.startsWith('backup_'))
+            .map(name => ({
+                name,
+                time: fs.statSync(path.join(BACKUP_DIR, name)).ctime.getTime()
+            }))
+            .sort((a, b) => a.time - b.time);
+
+        while (backups.length > MAX_BACKUPS) {
+            const oldest = backups.shift();
+            const oldestPath = path.join(BACKUP_DIR, oldest.name);
+            fs.rmSync(oldestPath, { recursive: true, force: true });
         }
-    }
 
-    const oldestBackup = path.join(config.BACKUP_DIR, 'backup_4');
-    if (fs.existsSync(oldestBackup)) {
-        fs.rmSync(oldestBackup, { recursive: true, force: true });
+    } catch (err) {
+        console.error("Fehler bei der Backup-Rotation:", err);
     }
-
-    const newBackup = path.join(config.BACKUP_DIR, 'backup_1');
-    fs.mkdirSync(newBackup, { recursive: true });
 }
 
 async function getAccessToken() {
@@ -92,12 +104,12 @@ async function listProjects() {
         });
         const projects = await response.json();
 
-        const exclusive = ""
+        const exclusive = "TEST TH: NPE \\ F-Fügedetail"
 
         for (const project of projects.data) {
             if(!exclusive || project.attributes.name===exclusive) {
 
-                const itemPath = path.join(config.BACKUP_DIR+"/backup_1", project.attributes.name.replace(/[<>:"/\\|?*]+/g, "_"));
+                const itemPath = path.join(config.BACKUP_DIR+"/backup_"+timestamp, project.attributes.name.replace(/[<>:"/\\|?*]+/g, "_"));
                 fs.mkdirSync(itemPath, { recursive: true });
 
                 console.log(`\nProjekt: ${project.attributes.name} (${project.id})`);
@@ -115,63 +127,83 @@ async function listProjects() {
             }
         }
     }
-}
+    const end = Date.now();
+    const durationMs = end - start;
+    const h = String(Math.floor(durationMs / 3600000)).padStart(2, '0');
+    const m = String(Math.floor((durationMs % 3600000) / 60000)).padStart(2, '0');
+    const s = String(Math.floor((durationMs % 60000) / 1000)).padStart(2, '0');
+    
+    console.log(`\nLaufzeit: ${h}:${m}:${s}`);
+    setTimeout(() => {
+        process.exit(0);
+    }, 5000);
 
+}
 
 async function downloadFile(urn, filename, folderPath, projectId, cursor = 0 ) {
     const token = await getAccessToken();
-
     const CHUNK_SIZE = 2000080000;
+    let err = false;
+
+    process.stdout.write("\x1b[1A");
+    process.stdout.write("\x1b["+cursor+"C");
 
     const response = await fetch(`https://developer.api.autodesk.com/data/v1/projects/${projectId}/items/${urn}`, {
         headers: { Authorization: `Bearer ${token}` }
     });
     const data = await response.json();
-    downloadurl = data.included[0].relationships.storage.meta.link.href.split("?")
-
-    const fileresponse = await fetch(downloadurl[0]+"/signeds3download", {
-        headers: { Authorization: `Bearer ${token}` }
-    });
-    const fileData = await fileresponse.json();
-
-    const fileUrl = fileData.url;
-
-    const filePath = path.join(folderPath);
-    let start = 0;
-    let partCounter = 1;
-
-    const fileStream = fs.createWriteStream(filePath);
-
     try {
-        while (true) {
-            const end = start + CHUNK_SIZE - 1;
-            const chunkResponse = await fetch(fileUrl, {
-                headers: { Range: `bytes=${start}-${end}` }
-            });
-
-            if (!chunkResponse.ok && chunkResponse.status !== 206 && chunkResponse.status !== 200) {
-                throw new Error(`Fehler beim Herunterladen der Datei: ${chunkResponse.statusText}`);
+        downloadurl = data.included[0].relationships.storage.meta.link.href.split("?");
+        const fileresponse = await fetch(downloadurl[0]+"/signeds3download", {
+            headers: { Authorization: `Bearer ${token}` }
+        });
+        const fileData = await fileresponse.json();
+    
+        const fileUrl = fileData.url;    
+        const filePath = path.join(folderPath);
+        let start = 0;
+        let partCounter = 1;
+    
+        const fileStream = fs.createWriteStream(filePath);
+    
+        try {
+            while (true) {
+                const end = start + CHUNK_SIZE - 1;
+                const chunkResponse = await fetch(fileUrl, {
+                    headers: { Range: `bytes=${start}-${end}` }
+                });
+    
+                if (!chunkResponse.ok && chunkResponse.status !== 206 && chunkResponse.status !== 200) {
+                    process.stdout.write(` 🔴 \x1b[31mnicht gespeichert\x1b[0m\n`);
+                    //throw new Error(`Fehler beim Herunterladen der Datei ${filename}: ${chunkResponse.statusText}`);
+                    logErrorToFile(`Fehler beim Herunterladen der Datei ${filename}: ${chunkResponse.statusText}`);
+                    err = true;
+                }
+    
+                const chunkBuffer = await chunkResponse.arrayBuffer();
+                fileStream.write(Buffer.from(chunkBuffer));
+    
+                start += CHUNK_SIZE;
+                partCounter++;
+    
+                if (chunkBuffer.byteLength < CHUNK_SIZE) {
+                    break;
+                }
             }
+        } catch (error) {
+            process.stdout.write(` 🔴 \x1b[31mnicht gespeichert\x1b[0m\n`);
+            logErrorToFile(error);
+            console.error(`Fehler beim Schreiben der Datei ${filename}:`, error);
+            err = true;
 
-            const chunkBuffer = await chunkResponse.arrayBuffer();
-            fileStream.write(Buffer.from(chunkBuffer));
-
-            start += CHUNK_SIZE;
-            partCounter++;
-
-            if (chunkBuffer.byteLength < CHUNK_SIZE) {
-                break;
-            }
+        } finally {
+            fileStream.end();
+            if(!err) { process.stdout.write(` 🟢 \x1b[32mgespeichert\x1b[0m\n`); }
         }
-    } catch (error) {
-        logErrorToFile(error);
-        console.error(`Fehler beim Schreiben der Datei ${filename}:`, error);
-    } finally {
-        fileStream.end();
+        
+    } catch {
+        logErrorToFile(data);
     }
-    process.stdout.write("\x1b[1A");
-    process.stdout.write("\x1b["+cursor+"C");
-    process.stdout.write(` ✅ \x1b[32mGespeichert\x1b[0m\n`);
 }
 
 async function listFiles(folderId, projectId, depth = 2, localPath) {
@@ -202,8 +234,7 @@ async function listFiles(folderId, projectId, depth = 2, localPath) {
 const rl = readline.createInterface({
     input: process.stdin,
     output: process.stdout
-  });
-  
+});
 
 const askQuestion = (question) => {
     return new Promise((resolve) => {
@@ -222,14 +253,16 @@ const init = async () => {
             var CLIENT_ID = await askQuestion('Client Id: ');
             var CLIENT_SECRET = await askQuestion('Client Secret: ');
             var BACKUP_DIR = await askQuestion('Backup Verzeichnis: ');
+            var MAX_BACKUPS = await askQuestion('Wieviele Backups behalten: ');
         
             config.CLIENT_ID = CLIENT_ID;
             config.CLIENT_SECRET = CLIENT_SECRET;
             config.BACKUP_DIR = BACKUP_DIR;
+            config.MAX_BACKUPS = MAX_BACKUPS;
     
             saveFile('config.json',config);
         
-            rl.close(); // Beendet das Readline-Interface
+            rl.close();
             return config;
         
             } catch (error) {
@@ -249,6 +282,3 @@ init().then(() => {
         console.error('Fehler:', error.message);
     });
 });
-
-
-
