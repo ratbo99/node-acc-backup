@@ -3,6 +3,7 @@ A small Node Script to Backup your Autodesk Construction Cloud Projects
 
 ## Getting Started
 * Create a Server-to-Server Application in the Autodesk Developer Portal: https://aps.autodesk.com/
+* select these two APIs: Autodesk Construction Cloud API, Data Management API
 * More Information: https://aps.autodesk.com/en/docs/oauth/v2/tutorials/create-app/
 
 ## Installing
@@ -15,7 +16,6 @@ A small Node Script to Backup your Autodesk Construction Cloud Projects
 
 ## TODO
 * test and optimization errorhandling
-* test and optimization backuprotation
 * implement incremental backups funkcion
 
 ## Acknowledgments
