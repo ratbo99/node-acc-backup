@@ -3,6 +3,7 @@ const path = require('path');
 const readline = require('readline');
 
 const configDir = './';
+var total_size = 0;
 
 if (!fs.existsSync(configDir)) {
     fs.mkdirSync(configDir, { recursive: true });
@@ -102,19 +103,13 @@ async function listProjects() {
         });
         const projects = await response.json();
 
-        const exclusive = config.EXCLUSIVE;
-        const exclude = config.EXCLUDE;
+        const exclusiveSet = new Set(config.EXCLUSIVE ? config.EXCLUSIVE.split(",").map(p => p.trim()) : []);
+        const excludeSet = new Set(config.EXCLUDE ? config.EXCLUDE.split(",").map(p => p.trim()) : []);
 
-        //if(!exclusive || project.attributes.name===exclusive)
         for (const project of projects.data) {
-
             const projectName = project.attributes.name;
-
-            if  ((exclusive && exclusive.toLowerCase().includes(projectName.trim().toLowerCase())) || // Falls "exclusive" gesetzt ist, nur diese Projekte laden
-                (!exclusive && !exclude) || // Falls beide Arrays leer sind, alle Projekte laden
-                (!exclusive && !exclude.toLowerCase().includes(projectName.trim().toLowerCase()))) // Falls nur "exclude" gesetzt ist, ausgeschlossene Projekte überspringen 
+            if ((exclusiveSet.size === 0 || exclusiveSet.has(projectName)) && !excludeSet.has(projectName))
             {
-
                 const itemPath = path.join(config.BACKUP_DIR+"/backup_"+timestamp, project.attributes.name.replace(/[<>:"/\\|?*]+/g, "_"));
                 fs.mkdirSync(itemPath, { recursive: true });
 
@@ -136,7 +131,7 @@ async function listProjects() {
                 } catch (error) {
                     logErrorToFile(error);
                     //console.log(data);
-                }
+                }                
             } 
         }
     }
@@ -146,11 +141,19 @@ async function listProjects() {
     const h = String(Math.floor(durationMs / 3600000)).padStart(2, '0');
     const m = String(Math.floor((durationMs % 3600000) / 60000)).padStart(2, '0');
     const s = String(Math.floor((durationMs % 60000) / 1000)).padStart(2, '0');
-    
-    console.log(`\nLaufzeit: ${h}:${m}:${s}`);
+
+    console.log(`\nLaufzeit: ${h}:${m}:${s}, Backupgröße ${formatBytes(total_size)}`);
     setTimeout(() => {
         process.exit(0);
     }, 5000);
+}
+
+function formatBytes(bytes) {
+    const sizes = ["Bytes", "KB", "MB", "GB", "TB"];
+    if (bytes === 0) return "0 Bytes";
+    
+    const i = Math.floor(Math.log(bytes) / Math.log(1024));
+    return (bytes / Math.pow(1024, i)).toFixed(2) + " " + sizes[i];
 }
 
 async function downloadFile(urn, filename, folderPath, projectId, cursor = 0 ) {
@@ -165,6 +168,10 @@ async function downloadFile(urn, filename, folderPath, projectId, cursor = 0 ) {
         headers: { Authorization: `Bearer ${token}` }
     });
     const data = await response.json();
+
+    //process.stdout.write(` ${data.included[0].attributes.createTime}, ${data.included[0].attributes.lastModifiedTime}`);
+    const size = formatBytes(data.included[0].attributes.storageSize);
+    process.stdout.write(` - ${size}`);
     try {
         downloadurl = data.included[0].relationships.storage.meta.link.href.split("?");
         const fileresponse = await fetch(downloadurl[0]+"/signeds3download", {
@@ -212,6 +219,7 @@ async function downloadFile(urn, filename, folderPath, projectId, cursor = 0 ) {
         } finally {
             fileStream.end();
             if(!err) { process.stdout.write(` 🟢\n`); }
+            total_size += data.included[0].attributes.storageSize;
         }        
     } catch {
         logErrorToFile(JSON.stringify(data,null,2));
