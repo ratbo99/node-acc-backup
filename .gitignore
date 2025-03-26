@@ -7,3 +7,6 @@ package-lock.json
 eslint.config.js
 config.json
 test.js
+sea*
+node*
+

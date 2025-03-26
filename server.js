@@ -1,6 +1,6 @@
-import fs from 'fs';
-import path from 'path';
-import readline from 'readline';
+const fs = require('fs');
+const path = require('path');
+const readline = require('readline');
 
 const configDir = './';
 var total_size = 0;
@@ -31,7 +31,7 @@ function logErrorToFile(error) {
 }
 
 function setupLogger(logFileName = "backup.log") {
-    const logFile = path.join(process.cwd(), logFileName);
+    const logFile = path.join(logFileName);
     const logStream = fs.createWriteStream(logFile, { flags: "a" });
   
     let buffer = ""; // Puffer für nicht abgeschlossene Zeilen
@@ -91,8 +91,8 @@ function rotateBackups() {
         const MAX_BACKUPS = config.MAX_BACKUPS;
         const BACKUP_DIR = config.BACKUP_DIR;
 
-        if (!fs.existsSync(config.BACKUP_DIR)) {
-            fs.mkdirSync(config.BACKUP_DIR, { recursive: true });
+        if (!fs.existsSync(path.join(BACKUP_DIR,'logs'))) {
+            fs.mkdirSync(path.join(BACKUP_DIR,'logs'), { recursive: true });
         }
 
         let mainBackupDir = fs.readdirSync(BACKUP_DIR)
@@ -116,15 +116,59 @@ function rotateBackups() {
                 .sort((a, b) => a.time - b.time);
     
             while (backups.length > MAX_BACKUPS) {
+
                 const oldest = backups.shift();
                 const oldestPath = path.join(BACKUP_DIR, oldest.name);
+
+                console.log('Backup Bereinigung:');
+                copyFilesRecursive(oldestPath, path.join(BACKUP_DIR, mainBackupDir));
+
                 fs.rmSync(oldestPath, { recursive: true, force: true });
+                console.log('\n');
+
             }
         }
 
     } catch (err) {
         console.error("Fehler bei der Backup-Rotation:", err);
     }
+}
+
+function copyFilesRecursive(sourceDir, destDir) {
+    // Stelle sicher, dass das Zielverzeichnis existiert
+    if (!fs.existsSync(destDir)) {
+        fs.mkdirSync(destDir, { recursive: true });
+    }
+
+    // Lies alle Dateien und Verzeichnisse im Quellverzeichnis
+    const files = fs.readdirSync(sourceDir);
+
+    files.forEach(file => {
+        const sourceFilePath = path.join(sourceDir, file);
+        const destFilePath = path.join(destDir, file);
+
+        // Überprüfe, ob es sich um eine Datei oder ein Verzeichnis handelt
+        const stat = fs.statSync(sourceFilePath);
+        if (stat.isDirectory()) {
+            // Wenn es ein Verzeichnis ist, rufe die Funktion rekursiv auf
+            copyFilesRecursive(sourceFilePath, destFilePath);
+        } else {
+            // Wenn es eine Datei ist, kopiere zurück ins mainbackup
+            if (!fs.existsSync(destFilePath)) {
+                fs.copyFileSync(sourceFilePath, destFilePath);
+                console.log(`${sourceFilePath} wurde ins Main Backup verschoben - Datei hat gefehlt.`)
+            } else {
+                const oldestFileStat = fs.statSync(sourceDir);
+                const mainBackupFileStat = fs.statSync(destDir);
+
+                // Wenn die Datei im ältesten Backup neuer ist, kopiere sie ins main_backup
+                if (oldestFileStat.mtime > mainBackupFileStat.mtime) {
+                    fs.copyFileSync(sourceFilePath, destFilePath);
+                    console.log(`${sourceFilePath} wurde ins Main Backup verschoben - aktuellere Datei.`)
+                }
+            }
+        }
+    });
 }
 
 async function getAccessToken() {
@@ -162,7 +206,8 @@ async function listHubs() {
 }
 
 async function listProjects() {
-    const stopLogging = setupLogger(`${config.BACKUP_FOLDER.replace(config.BACKUP_DIR+"\\","")}.log`);
+    //console.log(path.join(config.BACKUP_DIR,config.BACKUP_FOLDER.replace(config.BACKUP_DIR+"\\","")));
+    const stopLogging = setupLogger(`${path.join(config.BACKUP_DIR,'logs',config.BACKUP_FOLDER.replace(config.BACKUP_DIR+"\\",""))}.log`);
     const hubs = await listHubs();
     for (const hub of hubs) {
         console.log(`Hub: ${hub.attributes.name} / ${hub.id}`);
@@ -252,7 +297,7 @@ async function testDownloadSpeed() {
     return speedMbps;
 }
 
-function getDownloadTime(size,speed = 100) {
+function getDownloadTime(size, speed = 100) {
     const estimatedTimeMinutes = Math.ceil((size * 8) / (speed * 1_000_000) / 60);
     //mind. 2, max. 60 wegen api beschränkungen
     return Math.max(2, Math.min(estimatedTimeMinutes, 60));
@@ -294,7 +339,7 @@ async function downloadFile(urn, filename, folderPath, projectId) {
                 if(stats.mtime.toString() === new Date(data.included[0].attributes.lastModifiedTime).toString()) {
                     download = false;
                     //start as administrator to use symlinks
-                    fs.symlink(originalFile, folderPath, (err) => {
+                    /*fs.symlink(originalFile, folderPath, (err) => {
                         if (err) {
                             fs.symlink(originalFile, folderPath, 'junction', (err) => {
                                 if (err) {
@@ -308,7 +353,7 @@ async function downloadFile(urn, filename, folderPath, projectId) {
                               });
                             //logErrorToFile(`Fehler beim Erstellen des Symlinks: ${err} - als Admin ausführen!`);
                         }
-                      });
+                      });*/
                 } else {
                     download = true;
                 }   
@@ -319,7 +364,6 @@ async function downloadFile(urn, filename, folderPath, projectId) {
     if(download) {
         try {
             let downloadurl = data.included[0].relationships.storage.meta.link.href.split("?");
-            process.stdout.write(` ${getDownloadTime(size,config.SPEED)} `);
             const fileresponse = await fetch(downloadurl[0]+"/signeds3download?minutesExpiration="+getDownloadTime(data.included[0].attributes.storageSize,config.SPEED), {
                 headers: { Authorization: `Bearer ${token}` }
             });
@@ -328,7 +372,7 @@ async function downloadFile(urn, filename, folderPath, projectId) {
             const fileUrl = fileData.url;    
             const filePath = path.join(folderPath);
             let start = 0;
-            let partCounter = 1;
+            //let partCounter = 1;
         
             const fileStream = fs.createWriteStream(filePath);
         
@@ -435,6 +479,7 @@ const init = async () => {
             config.MAX_BACKUPS = MAX_BACKUPS;
             config.EXCLUSIVE = EXCLUSIVE;
             config.EXCLUDE = EXCLUDE;
+            config.SPEEDTEST = false;
                 
             saveFile('config.json',config);
         
@@ -449,7 +494,9 @@ const init = async () => {
 
 async function backupProjects() {
     rotateBackups();
-    config.SPEED = await testDownloadSpeed();
+    if(config.SPEEDTEST) {
+        config.SPEED = await testDownloadSpeed();
+    }
     listProjects();
 }
 
