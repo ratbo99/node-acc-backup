@@ -1,13 +1,19 @@
 {
-  "name": "ACC Backup",
-  "version": "1.0.0",
+  "name": "node-acc-backup",
+  "version": "1.0.3",
   "main": "server.js",
   "scripts": {
     "start": "npx nodemon server.js",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix"
   },
+  "type": "module",
   "author": "David Fickert",
   "license": "MIT",
-  "description": ""
+  "description": "",
+  "devDependencies": {
+    "@eslint/js": "^9.23.0",
+    "eslint": "^9.23.0",
+    "globals": "^16.0.0"
+  }
 }
